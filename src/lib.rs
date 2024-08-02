@@ -18,7 +18,7 @@ use reqwest::{
 };
 use serde::Deserialize;
 
-pub use error::{ApiError, CacheError};
+pub use error::Error;
 
 pub struct Api {
     client: Client,
@@ -51,7 +51,7 @@ pub struct ApiCache {
 }
 
 impl Api {
-    pub fn new(base_url: &str, data_dir: &str) -> Result<Self, ApiError> {
+    pub fn new(base_url: &str, data_dir: &str) -> Result<Self, Error> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         Ok(Self {
@@ -68,7 +68,7 @@ impl Api {
         &self,
         cache: Option<ApiCache>,
         user_id: &str,
-    ) -> Result<Option<ApiResults>, ApiError> {
+    ) -> Result<Option<ApiResults>, Error> {
         let url: Url = format!("{}/users/{}", self.base_url, user_id).parse()?;
         let mut req = self.client.get(url);
         if let Some(cache) = cache {
@@ -83,7 +83,7 @@ impl Api {
             if res.status() == StatusCode::NOT_MODIFIED {
                 return Ok(None); // keep using the cache
             }
-            return Err(ApiError::bad_status(res).await);
+            return Err(error::bad_status(res).await);
         }
 
         ensure_json(&res)?;
@@ -97,11 +97,11 @@ impl Api {
         }))
     }
 
-    pub fn read_user(&self, user_id: &str) -> Result<Option<ApiCache>, CacheError> {
+    pub fn read_user(&self, user_id: &str) -> Result<Option<ApiCache>, Error> {
         lookup_cache(&format!("{}/users/{}.yaml", self.data_dir, user_id))
     }
 
-    pub async fn sync_user(&self, user_id: &str) -> Result<(), ApiError> {
+    pub async fn sync_user(&self, user_id: &str) -> Result<(), Error> {
         let user = match self.fetch_user(self.read_user(user_id)?, user_id).await? {
             None => return Ok(()), // keep using the cache
             Some(user) => user,
@@ -110,23 +110,17 @@ impl Api {
         let body = user
             .body
             .get(0)
-            .ok_or(ApiError::InternalError("no user returned".to_string()))?;
+            .ok_or(error::internal("no user returned"))?;
         let id = body
             .get("id")
-            .ok_or(ApiError::ResponseDataError("user id not found".to_string()))?
+            .ok_or(error::internal("user id not found"))?
             .as_u64()
-            .ok_or(ApiError::ResponseDataError(
-                "user id was not an unsigned integer".to_string(),
-            ))?;
+            .ok_or(error::internal("user id was not an unsigned integer"))?;
         let login = body
             .get("login")
-            .ok_or(ApiError::ResponseDataError(
-                "user login not found".to_string(),
-            ))?
+            .ok_or(error::internal("user login not found"))?
             .as_str()
-            .ok_or(ApiError::ResponseDataError(
-                "user login was not a string".to_string(),
-            ))?
+            .ok_or(error::internal("user login was not a string"))?
             .to_string();
 
         create_dir_all(format!("{}/users", self.data_dir))?;
@@ -148,30 +142,30 @@ impl Api {
     }
 }
 
-fn ensure_json(res: &Response) -> Result<(), ApiError> {
+fn ensure_json(res: &Response) -> Result<(), Error> {
     let ct = res
         .headers()
         .get(CONTENT_TYPE)
-        .ok_or(ApiError::MissingHeader(CONTENT_TYPE))?
+        .ok_or(Error::MissingHeader(CONTENT_TYPE))?
         .to_str()
-        .map_err(|e| ApiError::BadHeaderCoding(CONTENT_TYPE, e))?
+        .map_err(|e| Error::BadHeaderCoding(CONTENT_TYPE, e))?
         .trim()
         .to_lowercase();
     let parts: Vec<&str> = ct.split(';').map(|part| part.trim()).collect();
     if (parts.len() > 0 && parts[0] != "application/json")
         || (parts.len() > 1 && parts[1] != "charset=utf-8")
     {
-        return Err(ApiError::BadContentType(ct.to_string()));
+        return Err(Error::BadContentType(ct.to_string()));
     }
 
     Ok(())
 }
 
-fn ensure_ok(res: &ApiResponse) -> Result<(), ApiError> {
+fn ensure_ok(res: &ApiResponse) -> Result<(), Error> {
     if let Some(status) = res.status {
         if let Ok(sc) = StatusCode::from_u16(status) {
             if !sc.is_success() {
-                return Err(ApiError::BadStatus(
+                return Err(Error::BadStatus(
                     sc,
                     res.error.clone().unwrap_or("".to_string()),
                 ));
@@ -180,31 +174,31 @@ fn ensure_ok(res: &ApiResponse) -> Result<(), ApiError> {
     }
 
     if let Some(error) = &res.error {
-        return Err(ApiError::ResponseError(error.to_string()));
+        return Err(Error::ResponseError(error.to_string()));
     }
 
     Ok(())
 }
 
-fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, ApiError> {
+fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, Error> {
     let mut header = serde_yaml::Mapping::new();
 
     let mut ts: DateTime<Utc> = parse_http_date(
         res.headers()
             .get(DATE)
-            .ok_or(ApiError::MissingHeader(DATE))?
+            .ok_or(Error::MissingHeader(DATE))?
             .to_str()
-            .map_err(|e| ApiError::BadHeaderCoding(DATE, e))?,
+            .map_err(|e| Error::BadHeaderCoding(DATE, e))?,
     )
-    .map_err(|e| ApiError::BadDateFormat(DATE, e))?
+    .map_err(|e| Error::BadDateFormat(DATE, e))?
     .into();
 
     if let Some(age_val) = res.headers().get(AGE) {
         let age: u64 = age_val
             .to_str()
-            .map_err(|e| ApiError::BadHeaderCoding(AGE, e))?
+            .map_err(|e| Error::BadHeaderCoding(AGE, e))?
             .parse()
-            .map_err(|e| ApiError::BadIntFormat(AGE, e))?;
+            .map_err(|e| Error::BadIntFormat(AGE, e))?;
         let duration = Duration::from_secs(age);
         ts -= duration;
     }
@@ -219,7 +213,7 @@ fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, ApiError> {
             serde_yaml::Value::String(ETAG.to_string()),
             serde_yaml::Value::String(
                 etag.to_str()
-                    .map_err(|e| ApiError::BadHeaderCoding(ETAG, e))?
+                    .map_err(|e| Error::BadHeaderCoding(ETAG, e))?
                     .to_string(),
             ),
         );
@@ -228,13 +222,13 @@ fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, ApiError> {
     Ok(header)
 }
 
-fn lookup_cache(path: &str) -> Result<Option<ApiCache>, CacheError> {
+fn lookup_cache(path: &str) -> Result<Option<ApiCache>, Error> {
     match File::open(path) {
         Ok(f) => {
             if let Some(header) = serde_yaml::Deserializer::from_reader(BufReader::new(f)).next() {
                 Ok(Some(ApiCache::deserialize(header)?))
             } else {
-                Err(CacheError::NoDocument(path.to_string()))
+                Err(error::internal(&format!("no document found in {}", path)))
             }
         }
         Err(_) => Ok(None),
@@ -245,7 +239,7 @@ macro_rules! check_property {
     ($res:expr, $field:ident, $expected:expr) => {
         if let Some(value) = $res.$field {
             if value != $expected {
-                return Err(ApiError::ResponseDataError(format!(
+                return Err(error::internal(&format!(
                     "expected {}: {}; got: {}",
                     stringify!($field),
                     $expected,
@@ -256,15 +250,15 @@ macro_rules! check_property {
     };
 }
 
-fn extract_single_value(res: ApiResponse) -> Result<serde_json::Value, ApiError> {
+fn extract_single_value(res: ApiResponse) -> Result<serde_json::Value, Error> {
     check_property!(res, page, 1);
     check_property!(res, per_page, 1);
     check_property!(res, total_results, 1);
 
     Ok(res
         .results
-        .ok_or_else(|| ApiError::ResponseDataError("no results".to_string()))?
+        .ok_or_else(|| error::internal("no results"))?
         .get(0)
-        .ok_or_else(|| ApiError::ResponseDataError("empty results array".to_string()))?
+        .ok_or_else(|| error::internal("empty results array"))?
         .clone())
 }

@@ -13,7 +13,7 @@ struct ApiResponse {
 }
 
 #[derive(Error, Debug)]
-pub enum ApiError {
+pub enum Error {
     #[error("bad status: {0}; {1}")]
     BadStatus(StatusCode, String),
 
@@ -38,13 +38,13 @@ pub enum ApiError {
     #[error("response error: {0}")]
     ResponseError(String),
 
-    #[error("response data error: {0}")]
-    ResponseDataError(String),
+    #[error("internal error: {0}")]
+    Internal(String),
 
-    #[error("failed to decode response data: {0}")]
+    #[error(transparent)]
     SerdeJsonError(#[from] serde_json::Error),
 
-    #[error("failed to encode response data: {0}")]
+    #[error(transparent)]
     SerdeYamlError(#[from] serde_yaml::Error),
 
     #[error(transparent)]
@@ -54,31 +54,15 @@ pub enum ApiError {
     ReqwestError(#[from] reqwest::Error),
 
     #[error(transparent)]
-    CacheError(#[from] CacheError),
-
-    #[error("internal error: {0}")]
-    InternalError(String),
-
-    #[error(transparent)]
     IoError(#[from] std::io::Error),
 }
 
-impl ApiError {
-    pub async fn bad_status(res: Response) -> Self {
-        Self::BadStatus(res.status(), extract_error(res).await)
-    }
+pub fn internal(msg: &str) -> Error {
+    Error::Internal(msg.to_string())
 }
 
-#[derive(Error, Debug)]
-pub enum CacheError {
-    #[error("no documents in file: {0}")]
-    NoDocument(String),
-
-    #[error("failed to parse data: {0}")]
-    SerdeYamlError(#[from] serde_yaml::Error),
-
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
+pub async fn bad_status(res: Response) -> Error {
+    Error::BadStatus(res.status(), extract_error(res).await)
 }
 
 async fn extract_error(res: Response) -> String {

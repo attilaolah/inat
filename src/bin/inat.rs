@@ -1,5 +1,5 @@
 use clap::Parser;
-use inat::{Api, ApiError};
+use inat::{Api, Error};
 
 /// CLI iNaturalist sync utility.
 /// Stores a copy one's personal inaturalist data.
@@ -20,7 +20,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), ApiError> {
+async fn main() -> Result<(), Error> {
     let args = Args::parse();
     let api = Api::new(&args.endpoint, &args.data)?;
 
