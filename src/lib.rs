@@ -3,11 +3,26 @@ use reqwest::{
     Client, Response, StatusCode, Url,
 };
 use serde::Deserialize;
+use serde_json::Value;
+use serde_yaml::to_string;
 use thiserror::Error;
 
 pub struct Api {
     client: Client,
     base_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiResponse {
+    // OK case:
+    page: Option<u64>,
+    per_page: Option<u64>,
+    total_results: Option<i64>,
+    results: Option<Vec<Value>>,
+
+    // Error case:
+    status: Option<u16>,
+    error: Option<String>,
 }
 
 #[derive(Error, Debug)]
@@ -24,16 +39,23 @@ pub enum ApiError {
     #[error("bad content type: {0}")]
     BadContentType(String),
 
-    #[error(transparent)]
-    BadUrl(#[from] url::ParseError),
+    #[error("response error: {0}")]
+    ResponseError(String),
+
+    #[error("response data error: {0}")]
+    ResponseDataError(String),
+
+    #[error("failed to decode response data: {0}")]
+    SerdeJsonError(#[from] serde_json::Error),
+
+    #[error("failed to encode response data: {0}")]
+    SerdeYamlError(#[from] serde_yaml::Error),
 
     #[error(transparent)]
-    Failed(#[from] reqwest::Error),
-}
+    UrlError(#[from] url::ParseError),
 
-#[derive(Debug, Deserialize)]
-struct ApiResponse {
-    error: Option<String>,
+    #[error(transparent)]
+    ReqwestError(#[from] reqwest::Error),
 }
 
 impl Api {
@@ -58,8 +80,23 @@ impl Api {
         }
         ensure_json(&res)?;
 
-        let text = res.text().await?;
-        Ok(text)
+        let api_res: ApiResponse = serde_json::from_str(&res.text().await?)?;
+        ensure_ok(&api_res)?;
+
+        Ok(to_string(&extract_single_value(api_res)?)?)
+    }
+}
+
+impl ApiResponse {
+    fn new() -> Self {
+        Self {
+            page: None,
+            per_page: None,
+            total_results: None,
+            results: None,
+            status: None,
+            error: None,
+        }
     }
 }
 
@@ -88,8 +125,63 @@ fn ensure_json(res: &Response) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn ensure_ok(res: &ApiResponse) -> Result<(), ApiError> {
+    if let Some(status) = res.status {
+        if let Ok(sc) = StatusCode::from_u16(status) {
+            if !sc.is_success() {
+                return Err(ApiError::BadStatus(
+                    sc,
+                    res.error.clone().unwrap_or("".to_string()),
+                ));
+            }
+        }
+    }
+
+    if let Some(error) = &res.error {
+        return Err(ApiError::ResponseError(error.to_string()));
+    }
+
+    Ok(())
+}
+
+fn extract_single_value(res: ApiResponse) -> Result<Value, ApiError> {
+    if let Some(page) = res.page {
+        if page != 1 {
+            return Err(ApiError::ResponseDataError(format!(
+                "expected page 1, got: {}",
+                page
+            )));
+        }
+    }
+
+    if let Some(per_page) = res.per_page {
+        if per_page != 1 {
+            return Err(ApiError::ResponseDataError(format!(
+                "expected 1 result page, got: {}",
+                per_page
+            )));
+        }
+    }
+
+    if let Some(total_results) = res.total_results {
+        if total_results != 1 {
+            return Err(ApiError::ResponseDataError(format!(
+                "expected 1 result in total, got: {}",
+                total_results
+            )));
+        }
+    }
+
+    Ok(res
+        .results
+        .ok_or_else(|| ApiError::ResponseDataError("no results".to_string()))?
+        .get(0)
+        .ok_or_else(|| ApiError::ResponseDataError("empty results array".to_string()))?
+        .clone())
+}
+
 async fn extract_error(res: Response) -> String {
     let data = res.text().await.unwrap_or("".to_string());
-    let api_res: ApiResponse = serde_json::from_str(&data).unwrap_or(ApiResponse { error: None });
+    let api_res: ApiResponse = serde_json::from_str(&data).unwrap_or(ApiResponse::new());
     api_res.error.unwrap_or_else(|| data.to_string())
 }
