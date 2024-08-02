@@ -189,8 +189,7 @@ fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, Error> {
             .ok_or(Error::MissingHeader(DATE))?
             .to_str()
             .map_err(|e| Error::BadHeaderCoding(DATE, e))?,
-    )
-    .map_err(|e| Error::BadDateFormat(DATE, e))?
+    )?
     .into();
 
     if let Some(age_val) = res.headers().get(AGE) {

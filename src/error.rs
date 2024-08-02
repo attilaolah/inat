@@ -29,9 +29,6 @@ pub enum Error {
     #[error("bad integer header range {0}: {0}")]
     BadIntRange(HeaderName, OutOfRangeError),
 
-    #[error("bad date header {0}: {0}")]
-    BadDateFormat(HeaderName, httpdate::Error),
-
     #[error("bad content type: {0}")]
     BadContentType(String),
 
@@ -40,6 +37,9 @@ pub enum Error {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error(transparent)]
+    HttpDateError(#[from] httpdate::Error),
 
     #[error(transparent)]
     SerdeJsonError(#[from] serde_json::Error),
