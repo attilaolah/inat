@@ -15,6 +15,7 @@
     nixpkgs,
   }:
     flake-utils.lib.eachDefaultSystem (system: let
+      inherit (pkgs) lib;
       pkgs = import nixpkgs {inherit system;};
       deps = with pkgs; [openssl];
       buildInputs =
@@ -35,7 +36,7 @@
           version = "0.1.0";
           cargoLock.lockFile = ./Cargo.lock;
 
-          src = pkgs.lib.cleanSource ./.;
+          src = lib.cleanSource ./.;
 
           buildInputs = deps;
           nativeBuildInputs = buildInputs;
@@ -43,6 +44,7 @@
 
       devShells.default = pkgs.mkShell {
         inherit buildInputs;
+        LD_LIBRARY_PATH = lib.makeLibraryPath deps;
       };
     });
 }
