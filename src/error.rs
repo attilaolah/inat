@@ -52,12 +52,33 @@ pub enum ApiError {
 
     #[error(transparent)]
     ReqwestError(#[from] reqwest::Error),
+
+    #[error(transparent)]
+    CacheError(#[from] CacheError),
+
+    #[error("internal error: {0}")]
+    InternalError(String),
+
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
 }
 
 impl ApiError {
     pub async fn bad_status(res: Response) -> Self {
         Self::BadStatus(res.status(), extract_error(res).await)
     }
+}
+
+#[derive(Error, Debug)]
+pub enum CacheError {
+    #[error("no documents in file: {0}")]
+    NoDocument(String),
+
+    #[error("failed to parse data: {0}")]
+    SerdeYamlError(#[from] serde_yaml::Error),
+
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
 }
 
 async fn extract_error(res: Response) -> String {
