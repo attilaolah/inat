@@ -2,7 +2,7 @@ use clap::Parser;
 use inat::{Api, Error};
 
 /// CLI iNaturalist sync utility.
-/// Stores a copy one's personal inaturalist data.
+/// Stores a copy of one's personal inaturalist data.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
