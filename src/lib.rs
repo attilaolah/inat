@@ -1,10 +1,15 @@
+use std::time::Duration;
+
+use chrono::{DateTime, OutOfRangeError, Utc};
+use core::num::ParseIntError;
+use httpdate::parse_http_date;
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue, ToStrError, ACCEPT, CONTENT_TYPE},
+    header::{
+        HeaderMap, HeaderName, HeaderValue, ToStrError, ACCEPT, AGE, CONTENT_TYPE, DATE, ETAG,
+    },
     Client, Response, StatusCode, Url,
 };
 use serde::Deserialize;
-use serde_json::Value;
-use serde_yaml::to_string;
 use thiserror::Error;
 
 pub struct Api {
@@ -18,7 +23,7 @@ struct ApiResponse {
     page: Option<u64>,
     per_page: Option<u64>,
     total_results: Option<i64>,
-    results: Option<Vec<Value>>,
+    results: Option<Vec<serde_json::Value>>,
 
     // Error case:
     status: Option<u16>,
@@ -34,7 +39,16 @@ pub enum ApiError {
     MissingHeader(HeaderName),
 
     #[error("bad header {0}: {0}")]
-    BadHeader(HeaderName, ToStrError),
+    BadHeaderCoding(HeaderName, ToStrError),
+
+    #[error("bad integer header {0}: {0}")]
+    BadIntFormat(HeaderName, ParseIntError),
+
+    #[error("bad integer header range {0}: {0}")]
+    BadIntRange(HeaderName, OutOfRangeError),
+
+    #[error("bad date header {0}: {0}")]
+    BadDateFormat(HeaderName, httpdate::Error),
 
     #[error("bad content type: {0}")]
     BadContentType(String),
@@ -80,10 +94,16 @@ impl Api {
         }
         ensure_json(&res)?;
 
+        let header = extract_header(&res)?;
         let api_res: ApiResponse = serde_json::from_str(&res.text().await?)?;
         ensure_ok(&api_res)?;
 
-        Ok(to_string(&extract_single_value(api_res)?)?)
+        let mut result = "".to_string();
+
+        result.push_str(&serde_yaml::to_string(&header)?);
+        result.push_str("---\n");
+        result.push_str(&serde_yaml::to_string(&extract_single_value(api_res)?)?);
+        Ok(result)
     }
 }
 
@@ -112,7 +132,7 @@ fn ensure_json(res: &Response) -> Result<(), ApiError> {
         .get(CONTENT_TYPE)
         .ok_or(ApiError::MissingHeader(CONTENT_TYPE))?
         .to_str()
-        .map_err(|err| ApiError::BadHeader(CONTENT_TYPE, err))?
+        .map_err(|err| ApiError::BadHeaderCoding(CONTENT_TYPE, err))?
         .trim()
         .to_lowercase();
     let parts: Vec<&str> = ct.split(';').map(|part| part.trim()).collect();
@@ -144,33 +164,66 @@ fn ensure_ok(res: &ApiResponse) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn extract_single_value(res: ApiResponse) -> Result<Value, ApiError> {
-    if let Some(page) = res.page {
-        if page != 1 {
-            return Err(ApiError::ResponseDataError(format!(
-                "expected page 1, got: {}",
-                page
-            )));
+macro_rules! check_property {
+    ($res:expr, $field:ident, $expected:expr) => {
+        if let Some(value) = $res.$field {
+            if value != $expected {
+                return Err(ApiError::ResponseDataError(format!(
+                    "expected {}: {}; got: {}",
+                    stringify!($field),
+                    $expected,
+                    value
+                )));
+            }
         }
+    };
+}
+
+fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, ApiError> {
+    let mut header = serde_yaml::Mapping::new();
+
+    if let Some(date) = res.headers().get(DATE) {
+        let mut ts: DateTime<Utc> = parse_http_date(
+            date.to_str()
+                .map_err(|err| ApiError::BadHeaderCoding(DATE, err))?,
+        )
+        .map_err(|err| ApiError::BadDateFormat(DATE, err))?
+        .into();
+
+        if let Some(age_val) = res.headers().get(AGE) {
+            let age: u64 = age_val
+                .to_str()
+                .map_err(|err| ApiError::BadHeaderCoding(AGE, err))?
+                .parse()
+                .map_err(|err| ApiError::BadIntFormat(AGE, err))?;
+            let duration = Duration::from_secs(age);
+            ts -= duration;
+        }
+
+        header.insert(
+            serde_yaml::Value::String(DATE.to_string()),
+            serde_yaml::Value::String(ts.to_rfc3339()),
+        );
     }
 
-    if let Some(per_page) = res.per_page {
-        if per_page != 1 {
-            return Err(ApiError::ResponseDataError(format!(
-                "expected 1 result page, got: {}",
-                per_page
-            )));
-        }
+    if let Some(etag) = res.headers().get(ETAG) {
+        header.insert(
+            serde_yaml::Value::String(ETAG.to_string()),
+            serde_yaml::Value::String(
+                etag.to_str()
+                    .map_err(|err| ApiError::BadHeaderCoding(ETAG, err))?
+                    .to_string(),
+            ),
+        );
     }
 
-    if let Some(total_results) = res.total_results {
-        if total_results != 1 {
-            return Err(ApiError::ResponseDataError(format!(
-                "expected 1 result in total, got: {}",
-                total_results
-            )));
-        }
-    }
+    Ok(header)
+}
+
+fn extract_single_value(res: ApiResponse) -> Result<serde_json::Value, ApiError> {
+    check_property!(res, page, 1);
+    check_property!(res, per_page, 1);
+    check_property!(res, total_results, 1);
 
     Ok(res
         .results
