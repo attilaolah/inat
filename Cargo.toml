@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.5.13", features = ["derive", "env"] }
+reqwest = "0.12.5"
+tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread"] }
