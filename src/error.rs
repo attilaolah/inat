@@ -9,7 +9,7 @@ use thiserror::Error;
 
 #[derive(Debug, Deserialize)]
 struct ApiResponse {
-    error: Option<String>,
+    error: String,
 }
 
 #[derive(Error, Debug)]
@@ -62,6 +62,9 @@ impl ApiError {
 
 async fn extract_error(res: Response) -> String {
     let data = res.text().await.unwrap_or("".to_string());
-    let api_res: ApiResponse = serde_json::from_str(&data).unwrap_or(ApiResponse { error: None });
-    api_res.error.unwrap_or_else(|| data.to_string())
+    let api_res: Result<ApiResponse, _> = serde_json::from_str(&data);
+    match api_res {
+        Ok(res) => res.error,
+        Err(_) => data.to_string(),
+    }
 }
