@@ -24,8 +24,7 @@
         ++ (with pkgs; [
           pkg-config
         ]);
-    in {
-      packages.default =
+      pkg =
         (pkgs.makeRustPlatform {
           cargo = toolchain;
           rustc = toolchain;
@@ -39,11 +38,27 @@
 
           buildInputs = deps;
           nativeBuildInputs = buildInputs;
+
+          meta.mainProgram = "inat";
         };
+    in {
+      packages.default = pkg;
 
       devShells.default = pkgs.mkShell {
         inherit buildInputs;
         LD_LIBRARY_PATH = lib.makeLibraryPath deps;
+      };
+
+      docker = pkgs.dockerTools.buildLayeredImage {
+        name = "attilaolah/sync-inat";
+        tag = "latest";
+        contents = with pkgs; [cacert] ++ deps;
+        config = {
+          Env = [
+            "LD_LIBRARY_PATH=${lib.makeLibraryPath deps}"
+          ];
+          Entrypoint = lib.getExe pkg;
+        };
       };
     });
 }
