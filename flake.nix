@@ -16,6 +16,7 @@
   }:
     flake-utils.lib.eachDefaultSystem (system: let
       inherit (pkgs) lib;
+      inherit (fenix.packages.${system}.minimal) toolchain;
       pkgs = import nixpkgs {inherit system;};
       deps = with pkgs; [openssl];
       buildInputs =
@@ -24,9 +25,7 @@
           pkg-config
         ]);
     in {
-      packages.default = let
-        toolchain = fenix.packages.${system}.minimal.toolchain;
-      in
+      packages.default =
         (pkgs.makeRustPlatform {
           cargo = toolchain;
           rustc = toolchain;
