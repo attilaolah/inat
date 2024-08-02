@@ -1,16 +1,16 @@
+mod error;
+
+pub use error::ApiError;
+
 use std::time::Duration;
 
-use chrono::{DateTime, OutOfRangeError, Utc};
-use core::num::ParseIntError;
+use chrono::{DateTime, Utc};
 use httpdate::parse_http_date;
 use reqwest::{
-    header::{
-        HeaderMap, HeaderName, HeaderValue, ToStrError, ACCEPT, AGE, CONTENT_TYPE, DATE, ETAG,
-    },
+    header::{HeaderMap, HeaderValue, ACCEPT, AGE, CONTENT_TYPE, DATE, ETAG},
     Client, Response, StatusCode, Url,
 };
 use serde::Deserialize;
-use thiserror::Error;
 
 pub struct Api {
     client: Client,
@@ -28,48 +28,6 @@ struct ApiResponse {
     // Error case:
     status: Option<u16>,
     error: Option<String>,
-}
-
-#[derive(Error, Debug)]
-pub enum ApiError {
-    #[error("bad status: {0}; {1}")]
-    BadStatus(StatusCode, String),
-
-    #[error("missing header: {0}")]
-    MissingHeader(HeaderName),
-
-    #[error("bad header {0}: {0}")]
-    BadHeaderCoding(HeaderName, ToStrError),
-
-    #[error("bad integer header {0}: {0}")]
-    BadIntFormat(HeaderName, ParseIntError),
-
-    #[error("bad integer header range {0}: {0}")]
-    BadIntRange(HeaderName, OutOfRangeError),
-
-    #[error("bad date header {0}: {0}")]
-    BadDateFormat(HeaderName, httpdate::Error),
-
-    #[error("bad content type: {0}")]
-    BadContentType(String),
-
-    #[error("response error: {0}")]
-    ResponseError(String),
-
-    #[error("response data error: {0}")]
-    ResponseDataError(String),
-
-    #[error("failed to decode response data: {0}")]
-    SerdeJsonError(#[from] serde_json::Error),
-
-    #[error("failed to encode response data: {0}")]
-    SerdeYamlError(#[from] serde_yaml::Error),
-
-    #[error(transparent)]
-    UrlError(#[from] url::ParseError),
-
-    #[error(transparent)]
-    ReqwestError(#[from] reqwest::Error),
 }
 
 impl Api {
@@ -104,25 +62,6 @@ impl Api {
         result.push_str("---\n");
         result.push_str(&serde_yaml::to_string(&extract_single_value(api_res)?)?);
         Ok(result)
-    }
-}
-
-impl ApiResponse {
-    fn new() -> Self {
-        Self {
-            page: None,
-            per_page: None,
-            total_results: None,
-            results: None,
-            status: None,
-            error: None,
-        }
-    }
-}
-
-impl ApiError {
-    async fn bad_status(res: Response) -> Self {
-        Self::BadStatus(res.status(), extract_error(res).await)
     }
 }
 
@@ -162,21 +101,6 @@ fn ensure_ok(res: &ApiResponse) -> Result<(), ApiError> {
     }
 
     Ok(())
-}
-
-macro_rules! check_property {
-    ($res:expr, $field:ident, $expected:expr) => {
-        if let Some(value) = $res.$field {
-            if value != $expected {
-                return Err(ApiError::ResponseDataError(format!(
-                    "expected {}: {}; got: {}",
-                    stringify!($field),
-                    $expected,
-                    value
-                )));
-            }
-        }
-    };
 }
 
 fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, ApiError> {
@@ -220,6 +144,21 @@ fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, ApiError> {
     Ok(header)
 }
 
+macro_rules! check_property {
+    ($res:expr, $field:ident, $expected:expr) => {
+        if let Some(value) = $res.$field {
+            if value != $expected {
+                return Err(ApiError::ResponseDataError(format!(
+                    "expected {}: {}; got: {}",
+                    stringify!($field),
+                    $expected,
+                    value
+                )));
+            }
+        }
+    };
+}
+
 fn extract_single_value(res: ApiResponse) -> Result<serde_json::Value, ApiError> {
     check_property!(res, page, 1);
     check_property!(res, per_page, 1);
@@ -231,10 +170,4 @@ fn extract_single_value(res: ApiResponse) -> Result<serde_json::Value, ApiError>
         .get(0)
         .ok_or_else(|| ApiError::ResponseDataError("empty results array".to_string()))?
         .clone())
-}
-
-async fn extract_error(res: Response) -> String {
-    let data = res.text().await.unwrap_or("".to_string());
-    let api_res: ApiResponse = serde_json::from_str(&data).unwrap_or(ApiResponse::new());
-    api_res.error.unwrap_or_else(|| data.to_string())
 }
