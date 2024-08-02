@@ -1,7 +1,7 @@
-use std::error::Error;
-
 use clap::Parser;
-use reqwest::{Client, Url};
+use reqwest::{Client, StatusCode, Url};
+use serde::Deserialize;
+use thiserror::Error;
 
 /// CLI iNaturalist sync utility.
 /// Stores a copy one's personal inaturalist data.
@@ -13,8 +13,25 @@ struct Args {
     user: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiError {
+    error: Option<String>,
+}
+
+#[derive(Error, Debug)]
+enum ResponseError {
+    #[error("status {0}: {1}")]
+    BadStatus(StatusCode, String),
+
+    #[error(transparent)]
+    BadUrl(#[from] url::ParseError),
+
+    #[error(transparent)]
+    Failed(#[from] reqwest::Error),
+}
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), ResponseError> {
     let args = Args::parse();
 
     let cli = Client::new();
@@ -24,9 +41,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if res.status().is_success() {
         let text = res.text().await?;
         println!("{}", text);
+        Ok(())
     } else {
-        println!("ERR: {}", res.status());
+        Err(ResponseError::BadStatus(
+            res.status(),
+            extract_error(&res.text().await.unwrap_or("".to_string())),
+        ))
     }
+}
 
-    Ok(())
+fn extract_error(data: &str) -> String {
+    let res: ApiError = serde_json::from_str(data).unwrap_or(ApiError { error: None });
+    res.error.unwrap_or_else(|| data.to_string())
 }
