@@ -72,8 +72,9 @@ impl Api {
     }
 
     pub async fn sync_all(&self, username: &str) -> Result<(), Error> {
-        create_dir_all(self.path("observations"))?;
-        create_dir_all(self.path("users"))?;
+        for subdir in ["observations", "users"] {
+            create_dir_all(self.path(subdir))?;
+        }
 
         let user_id = self.sync_user(username).await?;
         println!("OK: users/{}", user_id);
