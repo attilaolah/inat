@@ -1,7 +1,6 @@
 use std::{
-    fs::{create_dir_all, read_dir, read_link, remove_file, symlink_metadata, File},
-    io::{BufReader, Error as IoError, Write},
-    os::unix::fs::symlink,
+    fs::{create_dir_all, File},
+    io::{BufReader, Write},
     path::{Path, PathBuf},
     thread::sleep,
     time::Duration,
@@ -12,7 +11,7 @@ use httpdate::{fmt_http_date, parse_http_date};
 use reqwest::{
     header::{
         HeaderMap, HeaderValue, ACCEPT, AGE, CONTENT_TYPE, DATE, ETAG, IF_MODIFIED_SINCE,
-        IF_NONE_MATCH, RETRY_AFTER,
+        RETRY_AFTER,
     },
     Client, RequestBuilder, Response, StatusCode, Url,
 };
@@ -25,7 +24,7 @@ use serde_yaml::{
 
 use crate::error::{bad_status, corrupt_cache, internal, Error};
 
-const ID: &str = "id";
+pub(crate) const ID: &str = "id";
 
 // Documented as 500, but in practice it seems to be 200.
 const MAX_PER_PAGE: &str = "200";
@@ -35,18 +34,18 @@ const MAX_PER_PAGE: &str = "200";
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 pub struct Api {
-    client: Client,
+    pub(crate) client: Client,
     base_url: Url,
     data_dir: PathBuf,
 }
 
-pub struct ApiResults {
-    header: YamlMapping,
-    body: Vec<JsonValue>,
+pub(crate) struct ApiResults {
+    pub(crate) header: YamlMapping,
+    pub(crate) body: Vec<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ApiResponse {
+pub(crate) struct ApiResponse {
     // OK case:
     page: Option<u64>,
     per_page: Option<u64>,
@@ -59,21 +58,21 @@ struct ApiResponse {
 }
 
 #[derive(Debug)]
-pub struct Cache {
-    header: CacheHeader,
-    id: u64,
+pub(crate) struct Cache {
+    pub(crate) header: CacheHeader,
+    pub(crate) id: u64,
 }
 
 #[derive(Debug)]
-pub struct IDsCache {
+pub(crate) struct IDsCache {
     header: CacheHeader,
     ids: Vec<u64>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CacheHeader {
-    date: DateTime<Utc>,
-    etag: Option<String>,
+pub(crate) struct CacheHeader {
+    pub(crate) date: DateTime<Utc>,
+    pub(crate) etag: Option<String>,
 }
 
 impl Api {
@@ -96,47 +95,9 @@ impl Api {
         }
 
         let user_id = self.sync_user(username).await?;
-
         self.sync_observation_ids(user_id).await?;
 
         Ok(())
-    }
-
-    async fn sync_user(&self, username: &str) -> Result<u64, Error> {
-        let cached = lookup_cache_id(&self.path("users").join(format!("{}.yaml", username)))?;
-        let cached_id = cached.as_ref().and_then(|c| Some(c.id));
-        let user = match self
-            .fetch_user(cached.and_then(|c| Some(c.header)), username)
-            .await?
-        {
-            Some(user) => user,
-            // If nothing was returned, it was a cache hit, no need to update.
-            _ => return Ok(cached_id.ok_or(internal("user cache missing id"))?),
-        };
-
-        let body = user.body.get(0).ok_or(internal("no user returned"))?;
-        let id = body
-            .get(ID)
-            .ok_or(internal("user id not found"))?
-            .as_u64()
-            .ok_or(internal("user id was not u64"))?;
-        let login = body
-            .get("login")
-            .ok_or(internal("user login not found"))?
-            .as_str()
-            .ok_or(internal("user login was not a string"))?
-            .to_string();
-
-        let cache_path = self.path("users").join(format!("{}.yaml", id));
-        write_cache(
-            &cache_path,
-            &user.header,
-            &user.body.first().ok_or(internal("user has no body"))?,
-        )?;
-
-        self.symlink_user(&login, &id)?;
-
-        Ok(id)
     }
 
     async fn sync_observation_ids(&self, user_id: u64) -> Result<Vec<u64>, Error> {
@@ -204,70 +165,20 @@ impl Api {
         Ok(ids)
     }
 
-    async fn fetch_user(
-        &self,
-        cache: Option<CacheHeader>,
-        username: &str,
-    ) -> Result<Option<ApiResults>, Error> {
-        let url = self.endpoint(&format!("/users/{}", username));
-        let mut req = self.client.get(url);
-        if let Some(cache) = cache {
-            req = req.header(IF_MODIFIED_SINCE, fmt_http_date(cache.date.into()));
-            if let Some(etag) = cache.etag {
-                req = req.header(IF_NONE_MATCH, etag);
-            }
-        }
-
-        match fetch(req).await? {
-            Some((header, res)) => Ok(Some(ApiResults {
-                header,
-                body: vec![extract_single_value(res)?],
-            })),
-            _ => Ok(None),
-        }
-    }
-
-    fn symlink_user(&self, username: &str, id: &u64) -> Result<(), IoError> {
-        let dir = self.path("users");
-        let link = format!("{}.yaml", username).to_owned();
-        let target = &format!("{}.yaml", id);
-        let mut exists = false;
-
-        for entry in read_dir(&dir)? {
-            let path = entry?.path();
-            if let Ok(md) = symlink_metadata(&path) {
-                if md.file_type().is_symlink() {
-                    if let Ok(target_path) = read_link(&path) {
-                        let target = Path::new(target);
-                        let ok = path.file_name() == Some(target.as_os_str());
-                        if target_path == target && !ok {
-                            remove_file(&path)?;
-                        }
-                        exists |= ok;
-                    }
-                }
-            }
-        }
-
-        if !exists {
-            symlink(target, dir.join(link))?;
-        }
-
-        Ok(())
-    }
-
-    fn path(&self, sub: &str) -> PathBuf {
+    pub(crate) fn path(&self, sub: &str) -> PathBuf {
         self.data_dir.join(sub)
     }
 
-    fn endpoint(&self, path: &str) -> Url {
+    pub(crate) fn endpoint(&self, path: &str) -> Url {
         let mut url = self.base_url.clone();
         url.set_path(&format!("{}{}", url.path(), path));
         url
     }
 }
 
-async fn fetch(req: RequestBuilder) -> Result<Option<(YamlMapping, ApiResponse)>, Error> {
+pub(crate) async fn fetch(
+    req: RequestBuilder,
+) -> Result<Option<(YamlMapping, ApiResponse)>, Error> {
     let res = loop {
         let res = req
             .try_clone()
@@ -305,7 +216,7 @@ async fn fetch(req: RequestBuilder) -> Result<Option<(YamlMapping, ApiResponse)>
     Ok(Some((header, api_res)))
 }
 
-fn ensure_json(res: &Response) -> Result<(), Error> {
+pub(crate) fn ensure_json(res: &Response) -> Result<(), Error> {
     let ct = res
         .headers()
         .get(CONTENT_TYPE)
@@ -324,7 +235,7 @@ fn ensure_json(res: &Response) -> Result<(), Error> {
     Ok(())
 }
 
-fn ensure_ok(res: &ApiResponse) -> Result<(), Error> {
+pub(crate) fn ensure_ok(res: &ApiResponse) -> Result<(), Error> {
     if let Some(status) = res.status {
         if let Ok(sc) = StatusCode::from_u16(status) {
             if !sc.is_success() {
@@ -343,7 +254,7 @@ fn ensure_ok(res: &ApiResponse) -> Result<(), Error> {
     Ok(())
 }
 
-fn extract_header(res: &Response) -> Result<YamlMapping, Error> {
+pub(crate) fn extract_header(res: &Response) -> Result<YamlMapping, Error> {
     let mut header = YamlMapping::new();
 
     let mut ts: DateTime<Utc> = parse_http_date(
@@ -384,7 +295,7 @@ fn extract_header(res: &Response) -> Result<YamlMapping, Error> {
     Ok(header)
 }
 
-fn lookup_cache_id(path: &Path) -> Result<Option<Cache>, Error> {
+pub(crate) fn lookup_cache_id(path: &Path) -> Result<Option<Cache>, Error> {
     Ok(match lookup_cache(path)? {
         Some((header, data)) => Some(Cache {
             header,
@@ -462,7 +373,7 @@ macro_rules! check_prop {
     };
 }
 
-fn extract_single_value(res: ApiResponse) -> Result<JsonValue, Error> {
+pub(crate) fn extract_single_value(res: ApiResponse) -> Result<JsonValue, Error> {
     check_prop!(res, page, 1);
     check_prop!(res, per_page, 1);
     check_prop!(res, total_results, 1);
@@ -486,7 +397,11 @@ fn expect_results(res: ApiResponse) -> Result<Vec<JsonValue>, Error> {
     res.results.ok_or(internal("no results"))
 }
 
-fn write_cache<H: Serialize, D: Serialize>(path: &Path, header: &H, data: &D) -> Result<(), Error> {
+pub(crate) fn write_cache<H: Serialize, D: Serialize>(
+    path: &Path,
+    header: &H,
+    data: &D,
+) -> Result<(), Error> {
     let file = File::create(path)?;
     serde_yaml::to_writer(&file, header)?;
     writeln!(&file, "---")?;
