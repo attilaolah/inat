@@ -176,7 +176,7 @@ fn ensure_json(res: &Response) -> Result<(), Error> {
         .get(CONTENT_TYPE)
         .ok_or(Error::MissingHeader(CONTENT_TYPE))?
         .to_str()
-        .map_err(|e| Error::BadHeaderCoding(CONTENT_TYPE, e))?
+        .map_err(|err| Error::BadHeaderCoding(CONTENT_TYPE, err))?
         .trim()
         .to_lowercase();
     let parts: Vec<&str> = ct.split(';').map(|part| part.trim()).collect();
@@ -216,16 +216,16 @@ fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, Error> {
             .get(DATE)
             .ok_or(Error::MissingHeader(DATE))?
             .to_str()
-            .map_err(|e| Error::BadHeaderCoding(DATE, e))?,
+            .map_err(|err| Error::BadHeaderCoding(DATE, err))?,
     )?
     .into();
 
     if let Some(age_val) = res.headers().get(AGE) {
         let age: u64 = age_val
             .to_str()
-            .map_err(|e| Error::BadHeaderCoding(AGE, e))?
+            .map_err(|err| Error::BadHeaderCoding(AGE, err))?
             .parse()
-            .map_err(|e| Error::BadIntFormat(AGE, e))?;
+            .map_err(|err| Error::BadIntFormat(AGE, err))?;
         let duration = Duration::from_secs(age);
         ts -= duration;
     }
@@ -240,7 +240,7 @@ fn extract_header(res: &Response) -> Result<serde_yaml::Mapping, Error> {
             serde_yaml::Value::String(ETAG.to_string()),
             serde_yaml::Value::String(
                 etag.to_str()
-                    .map_err(|e| Error::BadHeaderCoding(ETAG, e))?
+                    .map_err(|err| Error::BadHeaderCoding(ETAG, err))?
                     .to_string(),
             ),
         );
