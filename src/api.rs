@@ -136,6 +136,12 @@ impl Api {
     }
 
     async fn sync_observation_ids(&self, user_id: u64) -> Result<Vec<u64>, Error> {
+        let mut ids: Vec<u64> = vec![];
+        let mut last_header = YamlMapping::new();
+        let cache_path = self
+            .path("users")
+            .join(format!("{}.observations.yaml", user_id));
+
         let mut url = self.endpoint("/observations");
         for (key, val) in [
             // keep sorted
@@ -148,17 +154,15 @@ impl Api {
             url.query_pairs_mut().append_pair(key, val);
         }
 
-        let cache_path = self
-            .path("users")
-            .join(format!("{}.observations.yaml", user_id));
-        if let Some(cached) = self.read_observation_ids(&cache_path)? {
-            println!("cached: {:#?}", cached);
-            todo!();
-        }
+        let last_modified = self.read_observation_ids(&cache_path)?.map(|cached| {
+            ids = cached.ids;
+            last_header.insert(
+                YamlValue::String(DATE.to_string()),
+                YamlValue::String(cached.header.date.to_rfc3339()),
+            );
+            cached.header.date
+        });
 
-        // No cache is present, simply fetch all IDs.
-        let mut ids: Vec<u64> = vec![];
-        let last_header: YamlMapping;
         loop {
             let mut url = url.clone();
             if let Some(id) = ids.last() {
@@ -166,11 +170,16 @@ impl Api {
                     .append_pair("id_above", &id.to_string());
             }
 
-            let (mut header, res) = match fetch(self.client.get(url)).await? {
+            let mut req = self.client.get(url);
+            if let Some(date) = last_modified {
+                req = req.header(IF_MODIFIED_SINCE, fmt_http_date(date.into()));
+            }
+
+            let (mut header, res) = match fetch(req).await? {
                 Some(val) => val,
-                // If nothing was returned, it was a cache hit, no need to update.
-                _ => continue,
+                _ => break, // cache hit
             };
+            println!("got res: {:?}", res);
 
             let is_last = is_last_page(&res)?;
             ids.extend_from_slice(&extract_ids(res)?);
@@ -182,6 +191,10 @@ impl Api {
                 break;
             }
         }
+
+        // TODO: handle deleted observations!
+        // If we receive no updates, but we end up having more IDs than listed in the users object,
+        // we need to re-fetch all IDs to make sure we get rid of the deleted ones.
 
         write_cache(&cache_path, &last_header, &ids)?;
 
@@ -397,7 +410,7 @@ fn is_last_page(res: &ApiResponse) -> Result<bool, Error> {
     let per_page = expect_prop!(res, per_page);
     let total_results = expect_prop!(res, total_results);
 
-    Ok((total_results + per_page - 1u64) / per_page == page)
+    Ok((total_results + per_page - 1u64) / per_page <= page)
 }
 
 macro_rules! check_prop {
