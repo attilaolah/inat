@@ -24,7 +24,7 @@ async fn main() -> Result<(), Error> {
     let args = Args::parse();
     let api = Api::new(&args.endpoint, &args.data)?;
 
-    api.sync_user(&args.user).await?;
+    api.sync_all(&args.user).await?;
 
     Ok(())
 }

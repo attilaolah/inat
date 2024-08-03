@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use chrono::OutOfRangeError;
 use core::num::ParseIntError;
 use reqwest::{
@@ -35,6 +37,9 @@ pub enum Error {
     #[error("response error: {0}")]
     ResponseError(String),
 
+    #[error("path {0}: {1}")]
+    CorruptCache(PathBuf, String),
+
     #[error("internal error: {0}")]
     Internal(String),
 
@@ -59,6 +64,10 @@ pub enum Error {
 
 pub fn internal(msg: &str) -> Error {
     Error::Internal(msg.to_string())
+}
+
+pub fn corrupt_cache(path: &Path, msg: &str) -> Error {
+    Error::CorruptCache(path.to_path_buf(), msg.to_string())
 }
 
 pub async fn bad_status(res: Response) -> Error {
