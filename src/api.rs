@@ -1,5 +1,5 @@
 use std::{
-    fs::{create_dir_all, File},
+    fs::{create_dir_all, read_dir, read_link, remove_file, symlink_metadata, File},
     io::{BufReader, Error as IoError, Write},
     os::unix::fs::symlink,
     path::{Path, PathBuf},
@@ -236,12 +236,30 @@ impl Api {
     }
 
     fn symlink_user(&self, username: &str, id: &u64) -> Result<(), IoError> {
-        // TODO: Remove all obsolete symlinks!
-        // TODO: Overwrite existing symlinks (or don't change them)!
-        symlink(
-            format!("{}.yaml", id),
-            self.path("users").join(format!("{}.yaml", username)),
-        )?;
+        let dir = self.path("users");
+        let link = format!("{}.yaml", username).to_owned();
+        let target = &format!("{}.yaml", id);
+        let mut exists = false;
+
+        for entry in read_dir(&dir)? {
+            let path = entry?.path();
+            if let Ok(md) = symlink_metadata(&path) {
+                if md.file_type().is_symlink() {
+                    if let Ok(target_path) = read_link(&path) {
+                        let target = Path::new(target);
+                        let ok = path.file_name() == Some(target.as_os_str());
+                        if target_path == target && !ok {
+                            remove_file(&path)?;
+                        }
+                        exists |= ok;
+                    }
+                }
+            }
+        }
+
+        if !exists {
+            symlink(link.clone(), dir.join(link))?;
+        }
 
         Ok(())
     }
