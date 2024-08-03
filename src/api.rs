@@ -258,7 +258,7 @@ impl Api {
         }
 
         if !exists {
-            symlink(link.clone(), dir.join(link))?;
+            symlink(target, dir.join(link))?;
         }
 
         Ok(())
