@@ -3,6 +3,7 @@ use std::{
     io::{BufReader, Error as IoError, Write},
     os::unix::fs::symlink,
     path::{Path, PathBuf},
+    thread::sleep,
     time::Duration,
 };
 
@@ -11,7 +12,7 @@ use httpdate::{fmt_http_date, parse_http_date};
 use reqwest::{
     header::{
         HeaderMap, HeaderValue, ACCEPT, AGE, CONTENT_TYPE, DATE, ETAG, IF_MODIFIED_SINCE,
-        IF_NONE_MATCH,
+        IF_NONE_MATCH, RETRY_AFTER,
     },
     Client, RequestBuilder, Response, StatusCode, Url,
 };
@@ -25,9 +26,13 @@ use serde_yaml::{
 use crate::error::{bad_status, corrupt_cache, internal, Error};
 
 const ID: &str = "id";
-//
+
 // Documented as 500, but in practice it seems to be 200.
 const MAX_PER_PAGE: &str = "200";
+
+// In case no Retry-After header is returned, default to 1m as documented.
+// TODO(https://github.com/rust-lang/rust/issues/120301): Use from_mins().
+const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 pub struct Api {
     client: Client,
@@ -91,7 +96,6 @@ impl Api {
         }
 
         let user_id = self.sync_user(username).await?;
-        println!("OK: users/{}", user_id);
 
         self.sync_observation_ids(user_id).await?;
 
@@ -179,7 +183,6 @@ impl Api {
                 Some(val) => val,
                 _ => break, // cache hit
             };
-            println!("got res: {:?}", res);
 
             let is_last = is_last_page(&res)?;
             ids.extend_from_slice(&extract_ids(res)?);
@@ -255,13 +258,34 @@ impl Api {
 }
 
 async fn fetch(req: RequestBuilder) -> Result<Option<(YamlMapping, ApiResponse)>, Error> {
-    let res = req.send().await?;
-    if !res.status().is_success() {
-        if res.status() == StatusCode::NOT_MODIFIED {
-            return Ok(None); // keep using the cache
+    let res = loop {
+        let res = req
+            .try_clone()
+            .ok_or(internal("request not cloneable"))?
+            .send()
+            .await?;
+        if res.status().is_success() {
+            break res;
         }
-        return Err(bad_status(res).await);
-    }
+
+        match res.status() {
+            StatusCode::NOT_MODIFIED => return Ok(None), // cache hit
+            StatusCode::TOO_MANY_REQUESTS => {
+                let retry_after = match res.headers().get(RETRY_AFTER) {
+                    Some(val) => Duration::from_secs(
+                        val.to_str()
+                            .map_err(|err| Error::BadHeaderCoding(RETRY_AFTER, err))?
+                            .parse()
+                            .map_err(|err| Error::BadIntFormat(RETRY_AFTER, err))?,
+                    ),
+                    _ => DEFAULT_RETRY_AFTER,
+                };
+                println!("TOO MANY REQUESTS: sleeping for {}s", retry_after.as_secs());
+                sleep(retry_after);
+            }
+            _ => return Err(bad_status(res).await),
+        }
+    };
 
     ensure_json(&res)?;
     let header = extract_header(&res)?;
