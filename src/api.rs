@@ -103,7 +103,7 @@ impl Api {
     }
 
     async fn sync_user(&self, username: &str) -> Result<u64, Error> {
-        let cached = self.read_user(username)?;
+        let cached = lookup_cache_id(&self.path("users").join(format!("{}.yaml", username)))?;
         let cached_id = cached.as_ref().and_then(|c| Some(c.id));
         let user = match self
             .fetch_user(cached.and_then(|c| Some(c.header)), username)
@@ -158,7 +158,7 @@ impl Api {
             url.query_pairs_mut().append_pair(key, val);
         }
 
-        let last_modified = self.read_observation_ids(&cache_path)?.map(|cached| {
+        let last_modified = lookup_cache_ids(&cache_path)?.map(|cached| {
             ids = cached.ids;
             last_header.insert(
                 YamlValue::String(DATE.to_string()),
@@ -225,14 +225,6 @@ impl Api {
             })),
             _ => Ok(None),
         }
-    }
-
-    fn read_user(&self, username: &str) -> Result<Option<Cache>, Error> {
-        lookup_cache_id(&self.path("users").join(format!("{}.yaml", username)))
-    }
-
-    fn read_observation_ids(&self, cache_path: &Path) -> Result<Option<IDsCache>, Error> {
-        lookup_cache_ids(cache_path)
     }
 
     fn symlink_user(&self, username: &str, id: &u64) -> Result<(), IoError> {
