@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use httpdate::fmt_http_date;
-use reqwest::header::{DATE, ETAG, IF_MODIFIED_SINCE};
+use reqwest::{
+    header::{DATE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH},
+    Client, Url,
+};
 use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 use tokio::{
     select,
@@ -12,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::api::{
-    extract_ids, fetch, is_last_page, lookup_cache_ids, write_cache, Api, ID, MAX_PER_PAGE,
-    MAX_WORKERS,
+    extract_ids, extract_single_value, fetch, is_last_page, lookup_cache_id, lookup_cache_ids,
+    write_cache, Api, ID, MAX_PER_PAGE, MAX_WORKERS,
 };
 use crate::error::Error;
 
@@ -95,6 +98,10 @@ impl Api {
                 let sem = sem.clone();
                 let err_tx = err_tx.clone();
                 let cancel = Arc::clone(&cancel);
+                let client = self.client.clone();
+                let cache_path = self.path("observations").join(format!("{}.yaml", id));
+                let url = self.endpoint(&format!("/observations/{}", id));
+
 
                 spawn(async move {
                     select! {
@@ -102,7 +109,7 @@ impl Api {
                         _ = async {
                             match sem.acquire().await {
                                 Ok(permit) => {
-                                    if let Err(err) = sync_observation(id).await {
+                                    if let Err(err) = sync_observation(client, &cache_path, url, id).await {
                                         if let Err(err) = err_tx.send(err).await {
                                             error!("observations/{}: send error: {}", id, err);
                                         }
@@ -145,7 +152,32 @@ impl Api {
     }
 }
 
-async fn sync_observation(id: u64) -> Result<(), Error> {
+async fn sync_observation(
+    client: Client,
+    cache_path: &Path,
+    url: Url,
+    id: u64,
+) -> Result<(), Error> {
     info!("observations/{}: syncing", id);
+
+    let mut req = client.get(url);
+    if let Some(cache) = lookup_cache_id(&cache_path)? {
+        req = req.header(IF_MODIFIED_SINCE, fmt_http_date(cache.header.date.into()));
+        if let Some(etag) = cache.header.etag {
+            req = req.header(IF_NONE_MATCH, etag);
+        }
+    }
+
+    let (header, res) = match fetch(req).await? {
+        Some(val) => val,
+        _ => {
+            info!("observations/{}: cache hit", id);
+            return Ok(()); // cache hit
+        }
+    };
+
+    write_cache(&cache_path, &header, &extract_single_value(res)?)?;
+    info!("observations/{}: updated", id);
+
     Ok(())
 }
