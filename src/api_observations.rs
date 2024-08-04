@@ -162,7 +162,8 @@ impl Api {
                         }
                     }
 
-                    self.extract_user(vec![annotation], header)?;
+                    self.extract_user(vec![&mut annotation.clone()], header)?;
+                    self.extract_votes(vec![annotation], header)?;
                 }
             }
         }
