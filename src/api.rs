@@ -89,6 +89,7 @@ impl Api {
             "applications",
             "controlled_term_labels",
             "controlled_terms",
+            "faves",
             "identifications",
             "observation_field_values",
             "observation_fields",
@@ -100,6 +101,7 @@ impl Api {
             "projects",
             "quality_metrics",
             "taxa",
+            "taxon_changes",
             "users",
             "votes",
         ] {

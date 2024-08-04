@@ -109,6 +109,7 @@ impl Api {
         // Normalise objects where applicable.
         self.extract_annotations(&mut results, &header)?;
         self.extract_application(&mut results, &header)?;
+        self.extract_faves(&mut results, &header)?;
         self.extract_identifications(&mut results, &header)?;
         self.extract_observation_field_values(&mut results, &header)?;
         self.extract_observation_photos(&mut results, &header)?;
@@ -206,6 +207,20 @@ impl Api {
         self.save_extracted(extracted, header, "taxa")
     }
 
+    fn extract_taxon_change<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            if let Some((id, obj)) = extract_object(&mut result, "taxon_change")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "taxon_change")
+    }
+
     fn extract_user<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
     where
         T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
@@ -234,6 +249,22 @@ impl Api {
         self.save_extracted(extracted, header, "controlled_term_labels")
     }
 
+    fn extract_faves<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "faves")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "faves")
+    }
+
     fn extract_identifications<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
     where
         T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
@@ -248,6 +279,7 @@ impl Api {
         }
 
         self.extract_taxon(extracted.values_mut(), header)?;
+        self.extract_taxon_change(extracted.values_mut(), header)?;
         self.extract_user(extracted.values_mut(), header)?;
 
         self.save_extracted(extracted, header, "identifications")
