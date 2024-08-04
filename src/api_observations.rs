@@ -1,10 +1,14 @@
+use std::collections::HashMap;
+
 use httpdate::fmt_http_date;
 use itertools::Itertools;
 use reqwest::header::{DATE, ETAG, IF_MODIFIED_SINCE};
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 
 use crate::api::{
-    expect_results, extract_ids, fetch, is_last_page, lookup_cache_ids, write_cache, Api, ID,
+    expect_results, extract_id, extract_ids, fetch, is_last_page, lookup_cache_ids, write_cache,
+    Api, ID,
 };
 use crate::error::{internal, Error};
 
@@ -100,21 +104,88 @@ impl Api {
         // But the etag doesn't match single items, so remove it.
         header.remove(YamlValue::String(ETAG.to_string()));
 
-        for result in expect_results(res)? {
+        let mut results = expect_results(res)?;
+
+        // Normalise objects where applicable.
+        let mut application_map = HashMap::new();
+        let mut community_taxon_map = HashMap::new();
+        let mut user_map = HashMap::new();
+
+        let mut identifications_map = HashMap::new();
+
+        for mut result in &mut results {
+            if let Some((id, application)) = extract_object(&mut result, "application")? {
+                application_map.insert(id, application);
+            }
+            if let Some((id, community_taxon)) = extract_object(&mut result, "community_taxon")? {
+                community_taxon_map.insert(id, community_taxon);
+            }
+            if let Some((id, user)) = extract_object(&mut result, "user")? {
+                user_map.insert(id, user);
+            }
+
+            for (id, identification) in extract_objects(&mut result, "identifications")? {
+                identifications_map.insert(id, identification);
+            }
+        }
+
+        for result in results {
             write_cache(
-                &self.path("observations").join(format!(
-                    "{}.yaml",
-                    result
-                        .get(ID)
-                        .ok_or(internal("missing id"))?
-                        .as_u64()
-                        .ok_or(internal("id is not u64"))?
-                )),
+                &self
+                    .path("observations")
+                    .join(format!("{}.yaml", &extract_id(&result)?)),
                 &header,
                 &result,
             )?;
         }
 
+        println!("extracted users: {}", user_map.len());
+
         Ok(())
     }
+}
+
+fn extract_object(
+    data: &mut JsonMap<String, JsonValue>,
+    key: &str,
+) -> Result<Option<(u64, JsonMap<String, JsonValue>)>, Error> {
+    Ok(match data.get(key) {
+        Some(val) => {
+            let obj = val
+                .as_object()
+                .ok_or(internal(&format!("{}: not an object", key)))?
+                .clone();
+            let id = extract_id(&obj)?;
+            data.insert(format!("{}_id", key), id.into());
+            data.remove(key);
+            Some((id, obj))
+        }
+        _ => None,
+    })
+}
+
+fn extract_objects(
+    data: &mut JsonMap<String, JsonValue>,
+    key: &str,
+) -> Result<Vec<(u64, JsonMap<String, JsonValue>)>, Error> {
+    Ok(match data.get(key) {
+        Some(val) => {
+            let arr: Vec<_> = val
+                .as_array()
+                .ok_or(internal(&format!("{}: not an array", key)))?
+                .clone()
+                .into_iter()
+                .map(|item| {
+                    item.as_object()
+                        .ok_or(internal(&format!("{} item: not an object", key)))
+                        .and_then(|obj| extract_id(&obj).and_then(|id| Ok((id, obj.clone()))))
+                })
+                .collect::<Result<_, _>>()?;
+            let ids: Vec<_> = arr.iter().map(|(id, _)| id).copied().collect();
+            data.insert(format!("{}_ids", key), ids.into());
+            data.remove(key);
+            arr
+        }
+        _ => vec![],
+    })
 }

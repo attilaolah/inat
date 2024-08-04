@@ -9,7 +9,8 @@ use httpdate::fmt_http_date;
 use reqwest::header::{IF_MODIFIED_SINCE, IF_NONE_MATCH};
 
 use crate::api::{
-    extract_single_value, fetch, lookup_cache_id, write_cache, Api, ApiResults, CacheHeader, ID,
+    extract_id, extract_single_value, fetch, lookup_cache_id, write_cache, Api, ApiResults,
+    CacheHeader,
 };
 use crate::error::{internal, Error};
 
@@ -27,11 +28,7 @@ impl Api {
         };
 
         let body = user.body.get(0).ok_or(internal("no user returned"))?;
-        let id = body
-            .get(ID)
-            .ok_or(internal("user id not found"))?
-            .as_u64()
-            .ok_or(internal("user id was not u64"))?;
+        let id = extract_id(body)?;
         let login = body
             .get("login")
             .ok_or(internal("user login not found"))?

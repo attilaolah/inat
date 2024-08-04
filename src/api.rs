@@ -13,7 +13,7 @@ use reqwest::{
     Client, RequestBuilder, Response, StatusCode, Url,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_yaml::{
     Deserializer as YamlDeserializer, Mapping as YamlMapping, Sequence as YamlSequence,
     Value as YamlValue,
@@ -36,7 +36,7 @@ pub struct Api {
 
 pub(crate) struct ApiResults {
     pub(crate) header: YamlMapping,
-    pub(crate) body: Vec<JsonValue>,
+    pub(crate) body: Vec<JsonMap<String, JsonValue>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,7 +45,7 @@ pub(crate) struct ApiResponse {
     page: Option<u64>,
     per_page: Option<u64>,
     total_results: Option<u64>,
-    results: Option<Vec<JsonValue>>,
+    results: Option<Vec<JsonMap<String, JsonValue>>>,
 
     // Error case:
     status: Option<u16>,
@@ -303,7 +303,7 @@ macro_rules! check_prop {
     };
 }
 
-pub(crate) fn extract_single_value(res: ApiResponse) -> Result<JsonValue, Error> {
+pub(crate) fn extract_single_value(res: ApiResponse) -> Result<JsonMap<String, JsonValue>, Error> {
     check_prop!(res, page, 1);
     check_prop!(res, per_page, 1);
     check_prop!(res, total_results, 1);
@@ -315,15 +315,16 @@ pub(crate) fn extract_single_value(res: ApiResponse) -> Result<JsonValue, Error>
 }
 
 pub(crate) fn extract_ids(res: ApiResponse) -> Result<Vec<u64>, Error> {
-    expect_results(res)?
-        .into_iter()
-        .map(|val| val.get(ID).cloned())
-        .map(|opt| opt.ok_or(internal("missing id")))
-        .map(|res| res.and_then(|val| val.as_u64().ok_or(internal("id is not u64"))))
-        .collect()
+    expect_results(res)?.iter().map(extract_id).collect()
 }
 
-pub(crate) fn expect_results(res: ApiResponse) -> Result<Vec<JsonValue>, Error> {
+pub(crate) fn extract_id(obj: &JsonMap<String, JsonValue>) -> Result<u64, Error> {
+    obj.get(ID)
+        .ok_or(internal("missing id"))
+        .and_then(|val| val.as_u64().ok_or(internal("id is not u64")))
+}
+
+pub(crate) fn expect_results(res: ApiResponse) -> Result<Vec<JsonMap<String, JsonValue>>, Error> {
     res.results.ok_or(internal("no results"))
 }
 
