@@ -87,9 +87,11 @@ impl Api {
     pub async fn sync_all(&self, username: &str) -> Result<(), Error> {
         for subdir in [
             "applications",
+            "conservation_statuses",
             "controlled_term_labels",
             "controlled_terms",
             "faves",
+            "flags",
             "identifications",
             "observation_field_values",
             "observation_fields",

@@ -110,6 +110,7 @@ impl Api {
         self.extract_annotations(&mut results, &header)?;
         self.extract_application(&mut results, &header)?;
         self.extract_faves(&mut results, &header)?;
+        self.extract_flags(&mut results, &header)?;
         self.extract_identifications(&mut results, &header)?;
         self.extract_observation_field_values(&mut results, &header)?;
         self.extract_observation_photos(&mut results, &header)?;
@@ -202,6 +203,7 @@ impl Api {
             }
         }
 
+        self.extract_conservation_status(extracted.values_mut(), header)?;
         self.extract_photos(extracted.values_mut(), header)?;
 
         self.save_extracted(extracted, header, "taxa")
@@ -249,6 +251,24 @@ impl Api {
         self.save_extracted(extracted, header, "controlled_term_labels")
     }
 
+    fn extract_conservation_status<'a, T>(
+        &self,
+        results: T,
+        header: &YamlMapping,
+    ) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for result in results {
+            if let Some((id, obj)) = extract_object(result, "conservation_status")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "conservation_statuses")
+    }
+
     fn extract_faves<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
     where
         T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
@@ -265,6 +285,22 @@ impl Api {
         self.save_extracted(extracted, header, "faves")
     }
 
+    fn extract_flags<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "flags")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "flags")
+    }
+
     fn extract_identifications<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
     where
         T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
@@ -278,6 +314,7 @@ impl Api {
             }
         }
 
+        self.extract_flags(extracted.values_mut(), header)?;
         self.extract_taxon(extracted.values_mut(), header)?;
         self.extract_taxon_change(extracted.values_mut(), header)?;
         self.extract_user(extracted.values_mut(), header)?;
@@ -301,6 +338,8 @@ impl Api {
                 extracted.insert(id, obj);
             }
         }
+
+        self.extract_flags(extracted.values_mut(), header)?;
 
         self.save_extracted(extracted, header, "photos")
     }
@@ -371,6 +410,7 @@ impl Api {
             }
         }
 
+        self.extract_flags(extracted.values_mut(), header)?;
         self.extract_project_admins(extracted.values_mut(), header)?;
 
         self.save_extracted(extracted, header, "projects")
