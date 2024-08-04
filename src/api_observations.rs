@@ -1,27 +1,16 @@
-use std::{path::Path, sync::Arc};
-
 use httpdate::fmt_http_date;
-use reqwest::{
-    header::{DATE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH},
-    Client, Url,
-};
+use itertools::Itertools;
+use reqwest::header::{DATE, ETAG, IF_MODIFIED_SINCE};
 use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
-use tokio::{
-    select,
-    sync::{mpsc, Semaphore},
-    task::{spawn, JoinHandle},
-};
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
 
 use crate::api::{
-    extract_ids, extract_single_value, fetch, is_last_page, lookup_cache_id, lookup_cache_ids,
-    write_cache, Api, ID, MAX_PER_PAGE, MAX_WORKERS,
+    expect_results, extract_ids, fetch, is_last_page, lookup_cache_ids, write_cache, Api, ID,
+    MAX_PER_PAGE,
 };
-use crate::error::Error;
+use crate::error::{internal, Error};
 
 impl Api {
-    pub(crate) async fn sync_observation_ids(&self, user_id: u64) -> Result<Vec<u64>, Error> {
+    pub(crate) async fn sync_user_observations(&self, user_id: u64) -> Result<(), Error> {
         let mut ids: Vec<u64> = vec![];
         let mut last_header = YamlMapping::new();
         let cache_path = self
@@ -34,7 +23,7 @@ impl Api {
             ("only_id", "true"),
             ("order", "asc"),
             ("order_by", ID),
-            ("per_page", MAX_PER_PAGE),
+            ("per_page", &MAX_PER_PAGE.to_string()),
             ("user_id", &user_id.to_string()),
         ] {
             url.query_pairs_mut().append_pair(key, val);
@@ -83,101 +72,44 @@ impl Api {
 
         write_cache(&cache_path, &last_header, &ids)?;
 
-        Ok(ids)
+        for chunk in &ids.into_iter().chunks(MAX_PER_PAGE) {
+            let ids: Vec<u64> = chunk.collect();
+            self.sync_observations(&ids).await?;
+        }
+
+        Ok(())
     }
 
-    pub(crate) async fn sync_observations(&self, ids: &[u64]) -> Result<(), Error> {
-        let sem = Arc::new(Semaphore::new(MAX_WORKERS));
-        let (err_tx, mut err_rx) = mpsc::channel(MAX_WORKERS);
-        let cancel = Arc::new(CancellationToken::new());
+    async fn sync_observations(&self, ids: &[u64]) -> Result<(), Error> {
+        let (mut header, res) = fetch(self.client.get(self.endpoint(&format!(
+            "/observations/{}",
+            ids.iter().map(|id| id.to_string()).join(",")
+        ))))
+        .await?
+        .ok_or(internal(&format!(
+            "observations ({}): no response",
+            ids.len()
+        )))?;
 
-        let tasks: Vec<JoinHandle<()>> = ids
-            .to_vec()
-            .into_iter()
-            .map(|id| {
-                let sem = sem.clone();
-                let err_tx = err_tx.clone();
-                let cancel = Arc::clone(&cancel);
-                let client = self.client.clone();
-                let cache_path = self.path("observations").join(format!("{}.yaml", id));
-                let url = self.endpoint(&format!("/observations/{}", id));
+        // The header can be used for each individual item.
+        // But the etag doesn't match single items, so remove it.
+        header.remove(YamlValue::String(ETAG.to_string()));
 
-
-                spawn(async move {
-                    select! {
-                        _ = cancel.cancelled() => {}
-                        _ = async {
-                            match sem.acquire().await {
-                                Ok(permit) => {
-                                    if let Err(err) = sync_observation(client, &cache_path, url, id).await {
-                                        if let Err(err) = err_tx.send(err).await {
-                                            error!("observations/{}: send error: {}", id, err);
-                                        }
-                                    }
-                                    drop(permit); // todo: not needed here?
-                                }
-                                Err(err) => if let Err(err) = err_tx.send(Error::AcquireError(err)).await {
-                                    error!("observations/{}: send error: {}", id, err);
-                                }
-                            }
-                        } => {}
-                    }
-                })
-            })
-            .collect();
-
-        select! {
-            _ = async {
-                for task in tasks {
-                    if let Err(err) = task.await {
-                        if let Err(err) = err_tx.send(Error::JoinError(err)).await {
-                            error!("observations: send error: {}", err);
-                        }
-                    }
-                }
-
-                // Drop the tx channel.
-                // This makes sure the receiver end can terminate.
-                drop(err_tx);
-            } => {
-                info!("observations synced");
-                Ok(())
-            }
-            Some(err) = err_rx.recv() => {
-                error!("observations failed to sync: {}; cancelling tasks", err);
-                cancel.cancel();
-                Err(err)
-            }
+        for result in expect_results(res)? {
+            write_cache(
+                &self.path("observations").join(format!(
+                    "{}.yaml",
+                    result
+                        .get(ID)
+                        .ok_or(internal("missing id"))?
+                        .as_u64()
+                        .ok_or(internal("id is not u64"))?
+                )),
+                &header,
+                &result,
+            )?;
         }
+
+        Ok(())
     }
-}
-
-async fn sync_observation(
-    client: Client,
-    cache_path: &Path,
-    url: Url,
-    id: u64,
-) -> Result<(), Error> {
-    info!("observations/{}: syncing", id);
-
-    let mut req = client.get(url);
-    if let Some(cache) = lookup_cache_id(&cache_path)? {
-        req = req.header(IF_MODIFIED_SINCE, fmt_http_date(cache.header.date.into()));
-        if let Some(etag) = cache.header.etag {
-            req = req.header(IF_NONE_MATCH, etag);
-        }
-    }
-
-    let (header, res) = match fetch(req).await? {
-        Some(val) => val,
-        _ => {
-            info!("observations/{}: cache hit", id);
-            return Ok(()); // cache hit
-        }
-    };
-
-    write_cache(&cache_path, &header, &extract_single_value(res)?)?;
-    info!("observations/{}: updated", id);
-
-    Ok(())
 }

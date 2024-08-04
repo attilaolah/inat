@@ -24,11 +24,8 @@ use crate::error::{bad_status, corrupt_cache, internal, Error};
 
 pub(crate) const ID: &str = "id";
 
-// Documented as 500, but in practice it seems to be 200.
-pub(crate) const MAX_PER_PAGE: &str = "200";
-
-// Maximum number of concurrent fetches.
-pub(crate) const MAX_WORKERS: usize = 20;
+// NOTE: Sometimes incorrectly documented as 500.
+pub(crate) const MAX_PER_PAGE: usize = 200;
 
 // In case no Retry-After header is returned, default to 1m as documented.
 // TODO(https://github.com/rust-lang/rust/issues/120301): Use from_mins().
@@ -96,8 +93,7 @@ impl Api {
         }
 
         let user_id = self.sync_user(username).await?;
-        let obs_ids = self.sync_observation_ids(user_id).await?;
-        self.sync_observations(&obs_ids).await?;
+        self.sync_user_observations(user_id).await?;
 
         Ok(())
     }
@@ -330,7 +326,7 @@ pub(crate) fn extract_ids(res: ApiResponse) -> Result<Vec<u64>, Error> {
         .collect()
 }
 
-fn expect_results(res: ApiResponse) -> Result<Vec<JsonValue>, Error> {
+pub(crate) fn expect_results(res: ApiResponse) -> Result<Vec<JsonValue>, Error> {
     res.results.ok_or(internal("no results"))
 }
 
