@@ -439,14 +439,18 @@ fn extract_object(
 ) -> Result<Option<(u64, JsonMap<String, JsonValue>)>, Error> {
     Ok(match data.get(key) {
         Some(val) => {
-            let obj = val
-                .as_object()
-                .ok_or(internal(&format!("{}: not an object", key)))?
-                .clone();
-            let id = extract_id(&obj)?;
-            data.insert(key.to_string(), id.into());
-            data.remove(&format!("{}_id", key));
-            Some((id, obj))
+            if val.is_null() {
+                None
+            } else {
+                let obj = val
+                    .as_object()
+                    .ok_or(internal(&format!("{}: not an object", key)))?
+                    .clone();
+                let id = extract_id(&obj)?;
+                data.insert(key.to_string(), id.into());
+                data.remove(&format!("{}_id", key));
+                Some((id, obj))
+            }
         }
         _ => None,
     })
