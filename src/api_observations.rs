@@ -5,9 +5,14 @@ use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 
 use crate::api::{
     expect_results, extract_ids, fetch, is_last_page, lookup_cache_ids, write_cache, Api, ID,
-    MAX_PER_PAGE,
 };
 use crate::error::{internal, Error};
+
+// NOTE: Sometimes incorrectly documented as 500.
+const MAX_IDS_PER_PAGE: usize = 200;
+
+// NOTE: This is an educated guess; documented as 200;
+const MAX_ITEMS_PER_PAGE: usize = 20;
 
 impl Api {
     pub(crate) async fn sync_user_observations(&self, user_id: u64) -> Result<(), Error> {
@@ -23,7 +28,7 @@ impl Api {
             ("only_id", "true"),
             ("order", "asc"),
             ("order_by", ID),
-            ("per_page", &MAX_PER_PAGE.to_string()),
+            ("per_page", &MAX_IDS_PER_PAGE.to_string()),
             ("user_id", &user_id.to_string()),
         ] {
             url.query_pairs_mut().append_pair(key, val);
@@ -72,7 +77,7 @@ impl Api {
 
         write_cache(&cache_path, &last_header, &ids)?;
 
-        for chunk in &ids.into_iter().chunks(MAX_PER_PAGE) {
+        for chunk in &ids.into_iter().chunks(MAX_ITEMS_PER_PAGE) {
             let ids: Vec<u64> = chunk.collect();
             self.sync_observations(&ids).await?;
         }

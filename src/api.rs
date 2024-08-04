@@ -24,9 +24,6 @@ use crate::error::{bad_status, corrupt_cache, internal, Error};
 
 pub(crate) const ID: &str = "id";
 
-// NOTE: Sometimes incorrectly documented as 500.
-pub(crate) const MAX_PER_PAGE: usize = 200;
-
 // In case no Retry-After header is returned, default to 1m as documented.
 // TODO(https://github.com/rust-lang/rust/issues/120301): Use from_mins().
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
