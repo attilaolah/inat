@@ -1,9 +1,19 @@
+use std::sync::Arc;
+
 use httpdate::fmt_http_date;
 use reqwest::header::{DATE, ETAG, IF_MODIFIED_SINCE};
 use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
+use tokio::{
+    select,
+    sync::{mpsc, Semaphore},
+    task::{spawn, JoinHandle},
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
 
 use crate::api::{
     extract_ids, fetch, is_last_page, lookup_cache_ids, write_cache, Api, ID, MAX_PER_PAGE,
+    MAX_WORKERS,
 };
 use crate::error::Error;
 
@@ -72,4 +82,70 @@ impl Api {
 
         Ok(ids)
     }
+
+    pub(crate) async fn sync_observations(&self, ids: &[u64]) -> Result<(), Error> {
+        let sem = Arc::new(Semaphore::new(MAX_WORKERS));
+        let (err_tx, mut err_rx) = mpsc::channel(MAX_WORKERS);
+        let cancel = Arc::new(CancellationToken::new());
+
+        let tasks: Vec<JoinHandle<()>> = ids
+            .to_vec()
+            .into_iter()
+            .map(|id| {
+                let sem = sem.clone();
+                let err_tx = err_tx.clone();
+                let cancel = Arc::clone(&cancel);
+
+                spawn(async move {
+                    select! {
+                        _ = cancel.cancelled() => {}
+                        _ = async {
+                            match sem.acquire().await {
+                                Ok(permit) => {
+                                    if let Err(err) = sync_observation(id).await {
+                                        if let Err(err) = err_tx.send(err).await {
+                                            error!("observations/{}: send error: {}", id, err);
+                                        }
+                                    }
+                                    drop(permit); // todo: not needed here?
+                                }
+                                Err(err) => if let Err(err) = err_tx.send(Error::AcquireError(err)).await {
+                                    error!("observations/{}: send error: {}", id, err);
+                                }
+                            }
+                        } => {}
+                    }
+                })
+            })
+            .collect();
+
+        select! {
+            _ = async {
+                for task in tasks {
+                    if let Err(err) = task.await {
+                        if let Err(err) = err_tx.send(Error::JoinError(err)).await {
+                            error!("observations: send error: {}", err);
+                        }
+                    }
+                }
+
+                // Drop the tx channel.
+                // This makes sure the receiver end can terminate.
+                drop(err_tx);
+            } => {
+                info!("observations synced");
+                Ok(())
+            }
+            Some(err) = err_rx.recv() => {
+                error!("observations failed to sync: {}; cancelling tasks", err);
+                cancel.cancel();
+                Err(err)
+            }
+        }
+    }
+}
+
+async fn sync_observation(id: u64) -> Result<(), Error> {
+    info!("observations/{}: syncing", id);
+    Ok(())
 }

@@ -8,6 +8,7 @@ use reqwest::{
 };
 use serde::Deserialize;
 use thiserror::Error;
+use tokio::{sync::AcquireError, task::JoinError};
 
 #[derive(Debug, Deserialize)]
 struct ApiResponse {
@@ -60,6 +61,12 @@ pub enum Error {
 
     #[error(transparent)]
     IoError(#[from] std::io::Error),
+
+    #[error(transparent)]
+    AcquireError(#[from] AcquireError),
+
+    #[error(transparent)]
+    JoinError(#[from] JoinError),
 }
 
 pub fn internal(msg: &str) -> Error {

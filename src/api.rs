@@ -18,6 +18,7 @@ use serde_yaml::{
     Deserializer as YamlDeserializer, Mapping as YamlMapping, Sequence as YamlSequence,
     Value as YamlValue,
 };
+use tracing::debug;
 
 use crate::error::{bad_status, corrupt_cache, internal, Error};
 
@@ -25,6 +26,9 @@ pub(crate) const ID: &str = "id";
 
 // Documented as 500, but in practice it seems to be 200.
 pub(crate) const MAX_PER_PAGE: &str = "200";
+
+// Maximum number of concurrent fetches.
+pub(crate) const MAX_WORKERS: usize = 20;
 
 // In case no Retry-After header is returned, default to 1m as documented.
 // TODO(https://github.com/rust-lang/rust/issues/120301): Use from_mins().
@@ -92,7 +96,8 @@ impl Api {
         }
 
         let user_id = self.sync_user(username).await?;
-        self.sync_observation_ids(user_id).await?;
+        let obs_ids = self.sync_observation_ids(user_id).await?;
+        self.sync_observations(&obs_ids).await?;
 
         Ok(())
     }
@@ -133,7 +138,7 @@ pub(crate) async fn fetch(
                     ),
                     _ => DEFAULT_RETRY_AFTER,
                 };
-                println!("TOO MANY REQUESTS: sleeping for {}s", retry_after.as_secs());
+                debug!("TOO MANY REQUESTS: sleeping for {}s", retry_after.as_secs());
                 sleep(retry_after);
             }
             _ => return Err(bad_status(res).await),

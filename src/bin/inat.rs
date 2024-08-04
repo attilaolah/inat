@@ -1,5 +1,7 @@
 use clap::Parser;
 use inat::{Api, Error};
+use tracing::{error, subscriber::set_global_default, Level};
+use tracing_subscriber::FmtSubscriber;
 
 /// CLI iNaturalist sync utility.
 /// Stores a copy of one's personal inaturalist data.
@@ -20,7 +22,19 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() {
+    set_global_default(
+        FmtSubscriber::builder()
+            .with_max_level(Level::INFO)
+            .finish(),
+    )
+    .expect("failed to set global default subscriber");
+    if let Err(err) = app().await {
+        error!("{}", err);
+    }
+}
+
+async fn app() -> Result<(), Error> {
     let args = Args::parse();
     let api = Api::new(&args.endpoint, &args.data)?;
 
