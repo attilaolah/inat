@@ -85,7 +85,21 @@ impl Api {
     }
 
     pub async fn sync_all(&self, username: &str) -> Result<(), Error> {
-        for subdir in ["observations", "users"] {
+        for subdir in [
+            "applications",
+            "controlled_term_labels",
+            "controlled_terms",
+            "identifications",
+            "observation_field_values",
+            "observation_fields",
+            "observation_photos",
+            "observations",
+            "photos",
+            "quality_metrics",
+            "taxa",
+            "users",
+            "votes",
+        ] {
             create_dir_all(self.path(subdir))?;
         }
 

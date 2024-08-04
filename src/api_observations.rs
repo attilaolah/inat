@@ -107,27 +107,16 @@ impl Api {
         let mut results = expect_results(res)?;
 
         // Normalise objects where applicable.
-        let mut application_map = HashMap::new();
-        let mut community_taxon_map = HashMap::new();
-        let mut user_map = HashMap::new();
-
-        let mut identifications_map = HashMap::new();
-
-        for mut result in &mut results {
-            if let Some((id, application)) = extract_object(&mut result, "application")? {
-                application_map.insert(id, application);
-            }
-            if let Some((id, community_taxon)) = extract_object(&mut result, "community_taxon")? {
-                community_taxon_map.insert(id, community_taxon);
-            }
-            if let Some((id, user)) = extract_object(&mut result, "user")? {
-                user_map.insert(id, user);
-            }
-
-            for (id, identification) in extract_objects(&mut result, "identifications")? {
-                identifications_map.insert(id, identification);
-            }
-        }
+        self.extract_annotations(&mut results, &header)?;
+        self.extract_application(&mut results, &header)?;
+        self.extract_identifications(&mut results, &header)?;
+        self.extract_observation_field_values(&mut results, &header)?;
+        self.extract_observation_photos(&mut results, &header)?;
+        self.extract_photos(&mut results, &header)?;
+        self.extract_quality_metrics(&mut results, &header)?;
+        self.extract_taxon(&mut results, &header)?;
+        self.extract_user(&mut results, &header)?;
+        self.extract_votes(&mut results, &header)?;
 
         for result in results {
             write_cache(
@@ -139,7 +128,254 @@ impl Api {
             )?;
         }
 
-        println!("extracted users: {}", user_map.len());
+        Ok(())
+    }
+
+    fn extract_application<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            if let Some((id, obj)) = extract_object(&mut result, "application")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "applications")
+    }
+
+    fn extract_taxon<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for key in ["community_taxon", "taxon", "previous_observation_taxon"] {
+                if let Some((id, mut obj)) = extract_object(&mut result, key)? {
+                    for (id, obj) in extract_objects(&mut obj, "ancestors")? {
+                        extracted.insert(id, obj);
+                    }
+
+                    extracted.insert(id, obj);
+                }
+            }
+        }
+
+        self.extract_photos(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "taxa")
+    }
+
+    fn extract_user<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for result in results {
+            if let Some((id, obj)) = extract_object(result, "user")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "users")
+    }
+
+    fn extract_annotations<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+
+        for result in results {
+            if let Some(annotations) = result.get_mut("annotations") {
+                for annotation in annotations
+                    .as_array_mut()
+                    .ok_or(internal("annotations: not an array"))?
+                    .iter_mut()
+                    .map(|val| {
+                        val.as_object_mut()
+                            .ok_or(internal("annotations item: not an object"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                {
+                    for key in ["controlled_attribute", "controlled_value"] {
+                        if let Some((id, mut obj)) = extract_object(annotation, key)? {
+                            for (id, obj) in extract_objects(&mut obj, "values")? {
+                                extracted.insert(id, obj);
+                            }
+
+                            extracted.insert(id, obj);
+                        }
+                    }
+
+                    self.extract_user(vec![annotation], header)?;
+                }
+            }
+        }
+
+        self.extract_labels(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "controlled_terms")
+    }
+
+    fn extract_labels<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "labels")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "controlled_term_labels")
+    }
+
+    fn extract_identifications<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for key in ["identifications", "non_owner_ids"] {
+                for (id, obj) in extract_objects(&mut result, key)? {
+                    extracted.insert(id, obj);
+                }
+            }
+        }
+
+        self.extract_taxon(extracted.values_mut(), header)?;
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "identifications")
+    }
+
+    fn extract_photos<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for key in ["default_photo", "photo"] {
+                if let Some((id, obj)) = extract_object(result, key)? {
+                    extracted.insert(id, obj);
+                }
+            }
+
+            for (id, obj) in extract_objects(&mut result, "photos")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "photos")
+    }
+
+    fn extract_observation_photos<'a, T>(
+        &self,
+        results: T,
+        header: &YamlMapping,
+    ) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "observation_photos")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_photos(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "observation_photos")
+    }
+
+    fn extract_observation_field_values<'a, T>(
+        &self,
+        results: T,
+        header: &YamlMapping,
+    ) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "ofvs")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_observation_field(extracted.values_mut(), header)?;
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "observation_field_values")
+    }
+
+    fn extract_observation_field<'a, T>(
+        &self,
+        results: T,
+        header: &YamlMapping,
+    ) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for result in results {
+            if let Some((id, obj)) = extract_object(result, "observation_field")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "observation_fields")
+    }
+
+    fn extract_quality_metrics<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "quality_metrics")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "quality_metrics")
+    }
+
+    fn extract_votes<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "votes")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "votes")
+    }
+
+    fn save_extracted(
+        &self,
+        extracted: HashMap<u64, JsonMap<String, JsonValue>>,
+        header: &YamlMapping,
+        subdir: &str,
+    ) -> Result<(), Error> {
+        for (id, data) in extracted {
+            write_cache(
+                &self.path(subdir).join(format!("{}.yaml", id)),
+                &header,
+                &data,
+            )?;
+        }
 
         Ok(())
     }
@@ -156,8 +392,8 @@ fn extract_object(
                 .ok_or(internal(&format!("{}: not an object", key)))?
                 .clone();
             let id = extract_id(&obj)?;
-            data.insert(format!("{}_id", key), id.into());
-            data.remove(key);
+            data.insert(key.to_string(), id.into());
+            data.remove(&format!("{}_id", key));
             Some((id, obj))
         }
         _ => None,
@@ -182,8 +418,8 @@ fn extract_objects(
                 })
                 .collect::<Result<_, _>>()?;
             let ids: Vec<_> = arr.iter().map(|(id, _)| id).copied().collect();
-            data.insert(format!("{}_ids", key), ids.into());
-            data.remove(key);
+            data.insert(key.to_string(), ids.into());
+            data.remove(&format!("{}_ids", key));
             arr
         }
         _ => vec![],
