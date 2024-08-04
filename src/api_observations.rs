@@ -132,6 +132,44 @@ impl Api {
         Ok(())
     }
 
+    fn extract_annotations<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+
+        for result in results {
+            if let Some(annotations) = result.get_mut("annotations") {
+                for annotation in annotations
+                    .as_array_mut()
+                    .ok_or(internal("annotations: not an array"))?
+                    .iter_mut()
+                    .map(|val| {
+                        val.as_object_mut()
+                            .ok_or(internal("annotations item: not an object"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                {
+                    for key in ["controlled_attribute", "controlled_value"] {
+                        if let Some((id, mut obj)) = extract_object(annotation, key)? {
+                            for (id, obj) in extract_objects(&mut obj, "values")? {
+                                extracted.insert(id, obj);
+                            }
+
+                            extracted.insert(id, obj);
+                        }
+                    }
+
+                    self.extract_user(vec![annotation], header)?;
+                }
+            }
+        }
+
+        self.extract_labels(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "controlled_terms")
+    }
+
     fn extract_application<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
     where
         T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
@@ -180,44 +218,6 @@ impl Api {
         }
 
         self.save_extracted(extracted, header, "users")
-    }
-
-    fn extract_annotations<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
-    where
-        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
-    {
-        let mut extracted = HashMap::new();
-
-        for result in results {
-            if let Some(annotations) = result.get_mut("annotations") {
-                for annotation in annotations
-                    .as_array_mut()
-                    .ok_or(internal("annotations: not an array"))?
-                    .iter_mut()
-                    .map(|val| {
-                        val.as_object_mut()
-                            .ok_or(internal("annotations item: not an object"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                {
-                    for key in ["controlled_attribute", "controlled_value"] {
-                        if let Some((id, mut obj)) = extract_object(annotation, key)? {
-                            for (id, obj) in extract_objects(&mut obj, "values")? {
-                                extracted.insert(id, obj);
-                            }
-
-                            extracted.insert(id, obj);
-                        }
-                    }
-
-                    self.extract_user(vec![annotation], header)?;
-                }
-            }
-        }
-
-        self.extract_labels(extracted.values_mut(), header)?;
-
-        self.save_extracted(extracted, header, "controlled_terms")
     }
 
     fn extract_labels<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
