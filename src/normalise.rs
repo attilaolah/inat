@@ -54,12 +54,14 @@ all_tables!(
     observation_field_values,
     observation_fields,
     observation_photos,
+    observation_sounds,
     observations,
     photos,
     project_admins,
     project_observations,
     projects,
     quality_metrics,
+    sounds,
     taxa,
     taxon_changes,
     users,
@@ -114,6 +116,7 @@ impl Normaliser {
         self.extract_identifications()?;
         self.extract_observation_field_values()?;
         self.extract_observation_photos()?;
+        self.extract_observation_sounds()?;
         self.extract_project_observations()?;
         self.extract_quality_metrics()?;
         self.extract_votes()?;
@@ -142,6 +145,9 @@ impl Normaliser {
 
         // NEEDS: observation_photos, taxa
         self.extract_photos()?;
+
+        // NEEDS: observation_sounds
+        self.extract_sounds()?;
 
         // NEEDS: many other fields, should be the last
         self.extract_users()?;
@@ -317,6 +323,16 @@ impl Normaliser {
         Ok(())
     }
 
+    fn extract_observation_photos(&mut self) -> Result<(), Error> {
+        for obs in self.cache.observations.values_mut() {
+            for (id, obj) in extract_objects(obs, "observation_photos")? {
+                self.cache.observation_photos.insert(id, obj);
+            }
+        }
+
+        Ok(())
+    }
+
     fn extract_photos(&mut self) -> Result<(), Error> {
         for obs in self.cache.observations.values_mut() {
             for (id, obj) in extract_objects(obs, "photos")? {
@@ -339,10 +355,26 @@ impl Normaliser {
         Ok(())
     }
 
-    fn extract_observation_photos(&mut self) -> Result<(), Error> {
+    fn extract_observation_sounds(&mut self) -> Result<(), Error> {
         for obs in self.cache.observations.values_mut() {
-            for (id, obj) in extract_objects(obs, "observation_photos")? {
-                self.cache.observation_photos.insert(id, obj);
+            for (id, obj) in extract_objects(obs, "observation_sounds")? {
+                self.cache.observation_sounds.insert(id, obj);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn extract_sounds(&mut self) -> Result<(), Error> {
+        for obs in self.cache.observations.values_mut() {
+            for (id, obj) in extract_objects(obs, "sounds")? {
+                self.cache.sounds.insert(id, obj);
+            }
+        }
+
+        for obs_sound in self.cache.observation_sounds.values_mut() {
+            if let Some((id, obj)) = extract_object(obs_sound, "sound")? {
+                self.cache.sounds.insert(id, obj);
             }
         }
 
