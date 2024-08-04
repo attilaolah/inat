@@ -260,8 +260,8 @@ impl Normaliser {
     }
 
     fn extract_labels(&mut self) -> Result<(), Error> {
-        for result in self.cache.observations.values_mut() {
-            for (id, obj) in extract_objects(result, "labels")? {
+        for term in self.cache.controlled_terms.values_mut() {
+            for (id, obj) in extract_objects(term, "labels")? {
                 self.cache.controlled_term_labels.insert(id, obj);
             }
         }
