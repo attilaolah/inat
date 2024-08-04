@@ -30,8 +30,8 @@ const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 pub struct Api {
     pub(crate) client: Client,
+    pub(crate) data_dir: PathBuf,
     base_url: Url,
-    data_dir: PathBuf,
 }
 
 pub(crate) struct ApiResults {
