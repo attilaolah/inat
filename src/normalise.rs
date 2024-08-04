@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fs::create_dir_all, path::PathBuf};
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_yaml::Mapping as YamlMapping;
@@ -424,12 +424,11 @@ impl Normaliser {
         extracted: &HashMap<u64, JsonMap<String, JsonValue>>,
         subdir: &str,
     ) -> Result<(), Error> {
+        let dir = self.data_dir.join(subdir);
+
+        create_dir_all(&dir)?;
         for (id, data) in extracted {
-            write_cache(
-                &self.data_dir.join(subdir).join(format!("{}.yaml", id)),
-                &self.header,
-                &data,
-            )?;
+            write_cache(&dir.join(format!("{}.yaml", id)), &self.header, &data)?;
         }
 
         Ok(())
