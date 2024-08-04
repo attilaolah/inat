@@ -60,6 +60,7 @@ all_tables!(
     project_admins,
     project_observations,
     project_observation_fields,
+    project_observation_rules,
     project_users,
     projects,
     quality_metrics,
@@ -126,8 +127,10 @@ impl Normaliser {
         // NEEDS: annotations
         self.extract_labels()?;
 
-        // NEEDS: identifications
+        // NEEDS: identifications, observation_field_values
         self.extract_taxa()?;
+
+        // NEEDS: identifications
         self.extract_taxon_changes()?;
 
         // NEEDS: project_observations
@@ -137,6 +140,7 @@ impl Normaliser {
         // NEEDS: projects
         self.extract_project_admins()?;
         self.extract_project_observation_fields()?;
+        self.extract_project_observation_rules()?;
 
         // NEEDS: observation_field_values, project_observation_fields
         self.extract_observation_fields()?;
@@ -144,11 +148,11 @@ impl Normaliser {
         // NEEDS: taxa
         self.extract_conservation_status()?;
 
-        // NEEDS: comments, identifications, observations, photos, projects
-        self.extract_flags()?;
-
         // NEEDS: observation_photos, taxa
         self.extract_photos()?;
+
+        // NEEDS: comments, identifications, observations, photos, projects
+        self.extract_flags()?;
 
         // NEEDS: observation_sounds
         self.extract_sounds()?;
@@ -229,6 +233,12 @@ impl Normaliser {
                 if let Some((id, obj)) = extract_object(&mut ident, key)? {
                     self.cache.taxa.insert(id, obj);
                 }
+            }
+        }
+
+        for mut ofv in self.cache.observation_field_values.values_mut() {
+            if let Some((id, obj)) = extract_object(&mut ofv, "taxon")? {
+                self.cache.taxa.insert(id, obj);
             }
         }
 
@@ -399,6 +409,16 @@ impl Normaliser {
         for proj in self.cache.projects.values_mut() {
             for (id, obj) in extract_objects(proj, "project_observation_fields")? {
                 self.cache.project_observation_fields.insert(id, obj);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn extract_project_observation_rules(&mut self) -> Result<(), Error> {
+        for proj in self.cache.projects.values_mut() {
+            for (id, obj) in extract_objects(proj, "project_observation_rules")? {
+                self.cache.project_observation_rules.insert(id, obj);
             }
         }
 
