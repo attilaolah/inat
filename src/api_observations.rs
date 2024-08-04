@@ -113,6 +113,7 @@ impl Api {
         self.extract_observation_field_values(&mut results, &header)?;
         self.extract_observation_photos(&mut results, &header)?;
         self.extract_photos(&mut results, &header)?;
+        self.extract_project_observations(&mut results, &header)?;
         self.extract_quality_metrics(&mut results, &header)?;
         self.extract_taxon(&mut results, &header)?;
         self.extract_user(&mut results, &header)?;
@@ -290,6 +291,57 @@ impl Api {
         self.extract_photos(extracted.values_mut(), header)?;
 
         self.save_extracted(extracted, header, "observation_photos")
+    }
+
+    fn extract_project_observations<'a, T>(
+        &self,
+        results: T,
+        header: &YamlMapping,
+    ) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "project_observations")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_project(extracted.values_mut(), header)?;
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "project_observations")
+    }
+
+    fn extract_project_admins<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "admins")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.save_extracted(extracted, header, "project_admins")
+    }
+
+    fn extract_project<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for result in results {
+            if let Some((id, obj)) = extract_object(result, "project")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_project_admins(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "projects")
     }
 
     fn extract_observation_field_values<'a, T>(
