@@ -218,7 +218,7 @@ impl Api {
             }
         }
 
-        self.save_extracted(extracted, header, "taxon_change")
+        self.save_extracted(extracted, header, "taxon_changes")
     }
 
     fn extract_user<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
