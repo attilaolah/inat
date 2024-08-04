@@ -109,6 +109,7 @@ impl Api {
         // Normalise objects where applicable.
         self.extract_annotations(&mut results, &header)?;
         self.extract_application(&mut results, &header)?;
+        self.extract_comments(&mut results, &header)?;
         self.extract_faves(&mut results, &header)?;
         self.extract_flags(&mut results, &header)?;
         self.extract_identifications(&mut results, &header)?;
@@ -162,6 +163,7 @@ impl Api {
                         }
                     }
 
+                    // TODO: This clone causes the user to not be extracted!!!
                     self.extract_user(vec![&mut annotation.clone()], header)?;
                     self.extract_votes(vec![annotation], header)?;
                 }
@@ -268,6 +270,22 @@ impl Api {
         }
 
         self.save_extracted(extracted, header, "conservation_statuses")
+    }
+
+    fn extract_comments<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a mut JsonMap<String, JsonValue>>,
+    {
+        let mut extracted = HashMap::new();
+        for mut result in results {
+            for (id, obj) in extract_objects(&mut result, "comments")? {
+                extracted.insert(id, obj);
+            }
+        }
+
+        self.extract_user(extracted.values_mut(), header)?;
+
+        self.save_extracted(extracted, header, "comments")
     }
 
     fn extract_faves<'a, T>(&self, results: T, header: &YamlMapping) -> Result<(), Error>
