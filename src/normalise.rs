@@ -172,9 +172,12 @@ impl Normaliser {
                         }
                     }
 
-                    // TODO: This clone causes the user to not be extracted!!!
-                    //self.extract_user(annotation, header)?;
-                    //self.extract_votes([&annotation], header)?;
+                    for (id, obj) in extract_objects(annotation, "votes")? {
+                        self.cache.votes.insert(id, obj);
+                    }
+                    if let Some((id, obj)) = extract_object(annotation, "user")? {
+                        self.cache.users.insert(id, obj);
+                    }
                 }
             }
         }
